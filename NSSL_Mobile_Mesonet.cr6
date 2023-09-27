@@ -1,0 +1,362 @@
+'CR6 Series
+'Created by Short Cut (3.1), modified by Sean Waugh
+'For use in NSSL mobile mesonets
+
+'Constants
+Const LOCAL_UTC_OFFSET = -6
+'zero offset of wind sensors. Zero = front of vehicle.
+Const WD_OFFSET = 142.0 'changed during Hurricane Ian intercept, was 157.0
+Const PI = 3.141597862
+Const D_R = ((2*PI)/360)
+Const R_D = (360/(2*PI))
+Const CRLF=CHR(13)+CHR(10)
+
+'Declare Variables and Units
+Dim AirTC
+Dim Pressure_Start_String As String * 10
+Dim FluxStr As String * 20
+Dim FluxData(3) As String
+Dim nmea(2) As String * 100
+Dim GPSRMC(12) As String
+Dim GPSGGA(15) As String
+Dim e
+Dim e_s
+Dim Commands As String * 200
+Dim String_1 As String
+Dim String_2 As String
+Dim NbytesReturned
+Dim DD_temp
+Dim MM_temp
+Dim YY_temp
+Dim hour_temp
+Dim minute_temp
+Dim second_temp
+Dim temp_pressure
+
+Public SerialIndest As String * 26
+Public BattV
+Public PTemp_C
+Public WS_ms_raw
+Public WindDir_raw
+Public SlowTemp
+Public SlowRH
+Public Utube_FastTemp
+Public TdC
+Public Pressure As String * 20
+Public Pressure_corr
+Public GPSTime
+Public GPSStatus As String
+Public GPSLat As String
+Public GPSLon As String
+Public GPSSpd
+Public GPSDir
+Public GPSDate
+Public GPSMagVar
+Public GPSAlt
+Public gpsData(15)
+Public FluxDirection
+Public Derived_RH
+Public compassDir
+Public windSpd_ms
+Public windDir_Der
+Public ProgramName As String * 40
+Public Veh_vector
+Public Veh_x, Veh_y
+Public Apparent_vector
+Public Apparent_x, Apparent_y
+Public X, Y
+Public RHArray(2) As String
+Public GPS_lat_decimal
+Public GPS_lon_decimal
+Public GPS_date_time As String * 20
+Public veh_heading
+
+Units BattV=Volts
+Units PTemp_C=Deg C
+Units WS_ms_raw=meters/second
+Units WindDir_raw=degrees
+Units SlowTemp=Deg C
+Units SlowRH=%
+Units Utube_FastTemp=Deg C
+Units TdC=Deg C
+Units Pressure=hPa
+Units GPSTime=UTC
+Units GPSStatus=A OR V
+Units GPSLat=degrees
+Units GPSLon=degrees
+Units GPSSpd=meters/second
+Units GPSDir=degrees
+Units GPSDate=DDMMYY
+Units GPSMagVar=degrees
+Units GPSAlt=meters
+Units FluxDirection=degrees
+Units Derived_RH=%
+Units windSpd_ms = m/s
+
+'Define Data Tables
+DataTable(Obs,True,-1)
+	DataInterval(0,1,Sec,10)
+	Sample(1,windSpd_ms,FP2)
+  	Sample(1,windDir_Der,FP2)
+	Sample(1,SlowTemp,FP2)
+	Sample(1,SlowRH,FP2)
+	Sample(1,Utube_FastTemp,FP2)
+	Sample(1,TdC,FP2))
+	Sample(1,Derived_RH,FP2)	
+	Sample(1,Pressure_corr,IEEE4)
+	Sample(1,compassDir, IEEE4)
+	Sample(1,GPSDate, String)
+	Sample(1,GPSTime, String)
+	Sample(1,GPSStatus, String)
+	Sample(1,GPS_lat_decimal,IEEE4)
+	Sample(1,GPS_lon_decimal,IEEE4)
+	Sample(1,GPSAlt, FP2)
+	Sample(1,GPSSpd, FP2)
+	Sample(1,GPSDir, FP2)
+	Sample(1,BattV,FP2)
+	Sample(1,PTemp_C,FP2)
+EndTable
+
+DataTable(Support,True,-1)
+	DataInterval(0,1,Sec,10)
+  	Sample(1,WS_ms_raw,FP2)
+  	Sample(1,WindDir_raw,FP2)
+ 	Sample(1,FluxDirection,FP2)
+  	Sample(1,nmea(1), String)
+	Sample(1,nmea(2), String)
+  	Sample(1,LOCAL_UTC_OFFSET,FP2)
+  	FieldNames("LOCAL_UTC_OFFSET")
+  	Sample(1,WD_OFFSET,FP2)
+  	FieldNames("WD_OFFSET")
+  	Sample(1,X,FP2)
+  	Sample(1,Y,FP2)
+  	Sample(1,Pressure,IEEE4)
+EndTable
+
+'Create the webpage for the real time data
+WebPageBegin ("default.html",Commands)
+  HTTPOut("<html>")
+  HTTPOut("<h2>Welcome to the NSSL Mobile Mesonet Webpage!</h2>")
+  HTTPOut("<body>")
+  HTTPOut("<p>This page is designed to provide wireless data access to the NSSL Mobile Mesonets.</p>")
+  HTTPOut("<p>DO NOT CHANGE WITHOUT GOOD REASON.</p>")
+  HTTPOut("<p>Contact Sean Waugh (sean.waugh@noaa.gov) with any questions.</p>")
+  HTTPOut("<p>Current Program: " +  ProgramName + "</p>")
+  HTTPOut("<p><a href="+ CHR(34) + "command=NewestRecord&table=Obs"+ CHR(34) +">Current Record from Obs Table</a></p>")
+  HTTPOut("<p><a href="+ CHR(34) + "command=NewestRecord&table=Support"+ CHR(34) +">Current Record from Support Table</a></p>")
+	HTTPOut("<a href="+ CHR(34) + "GPSLocation.html" + CHR(34) + ">GPS Location</a>")
+  HTTPOut("</body>")
+  HTTPOut("</html>")
+WebPageEnd 
+
+'Create the webpage for the real time GPS data. This is formatted to work with the GR programs.
+WebPageBegin ("GPSLocation.html",Commands)
+	HTTPOut("Refresh: 1" + CHR(13) + CHR(10))
+	HTTPOut("Threshold: 999" + CHR(13) + CHR(10))
+	HTTPOut("Title: Local Positions - NSSL" + CHR(13) + CHR(10))
+	HTTPOut("Font: 1, 11, 0, " + CHR(34) + "Courier New" + CHR(34) + CHR(13) + CHR(10))
+	HTTPOut("IconFile: 6, 22, 22, 11, 11, " + CHR(34) + "http://www.spotternetwork.org/icon/spotternet_new.png" + CHR(34) + CHR(13) + CHR(10))
+	HTTPOut("Object: " + GPS_lat_decimal + CHR(44) + GPS_lon_decimal + CHR(13) + CHR(10))
+	HTTPOut("Icon: 0,0,000,6,4," + CHR(34) + "P1\n" + GPS_date_time + "\nHeading: " + veh_heading + CHR(34) + CHR(13) + CHR(10))
+	HTTPOut("End:" + CHR(13) + CHR(10))
+WebPageEnd 
+
+'Main Program
+BeginProg
+	'Set the status of the user drive where we will store the GPS placefile 
+	SetStatus ("USRDriveSize", 16384)
+
+  ProgramName = status.ProgName
+  'Open the GPS port
+  SerialOpen(ComU1,38400,0,0,10000)
+
+  'Enable the HMP155 for serial output
+  SerialOpen (ComC3,4800,58,0,53,3) 'buffer = 2*number of bytes + 1
+  'SDM-SI01 port 58 For half duplex,7,e,1
+  'Strings to start serial output
+  String_1 = "SEND"+CRLF  'set SMODE to “RUN”
+     
+'Main Scan
+Scan(1,Sec,1,0)
+	'Default Datalogger Battery Voltage measurement 'BattV'
+	Battery(BattV)
+		
+	'Default Wiring Panel Temperature measurement 'PTemp_C'
+	PanelTemp(PTemp_C,60)
+		
+	'05103 Wind Speed & Direction Sensor measurements 'WS_ms' and 'WindDir'
+	PulseCount(WS_ms_raw,1,U6,5,1,0.098,0)
+	BrHalf(WindDir_raw,1,mV5000,U4,U3,1,2500,True,0,60,355,0)
+	If WindDir_raw>=360 OR WindDir_raw<0 Then WindDir_raw=0
+
+	'HMP155 Serial read
+	'Get serial string from sensor
+	SerialOut(ComC3,String_1, "", 0, 100)
+	SerialInRecord (COMC3,SerialIndest,00,24,&H0D0A,NbytesReturned,00) '&H0D0A = CRLF
+	'Parse RH and temp from string
+	SplitStr (RHArray(1),SerialIndest,"=",2,0)
+	'Move the RH and Temperature into the previously defined variables
+	SlowTemp = RHArray(2)
+	SlowRH = RHArray(1)
+	'Set the RHArray to -999 so that if the HMP155 drops out, you don't
+	'keep repeating the previous values
+	RHArray(1) = "-999"
+	RHArray(2) = "-999"
+		
+	'109 Temperature Probe measurement 'Utube_FastTemp'
+	Therm109(Utube_FastTemp,1,U7,U3,0,60,1,0)
+	
+	'Dew Point calculation 'TdC'
+	AirTC=SlowTemp
+	DewPoint(TdC,AirTC,SlowRH)
+	If TdC>AirTC Or TdC=NAN Then TdC=AirTC
+	'Read in the pressure string, first open the port
+	SerialOpen(ComC1,9600,0,0,10000)
+	'Build the output string and output it to prompt the pressure unit.
+	Pressure_Start_String = ".P" & CHR(13) & CHR(10) & ""
+	SerialOut(ComC1,Pressure_Start_String, "", 0, 100)
+	'Now read the response, the Begin and End Words are NULL ASCII characters, eg 0
+	SerialInRecord(ComC1,Pressure,0,0,0,"",01)
+	'Per the results in Waugh (2022), the raw pressure observations need to be corrected
+	' for the vehicle relative wind. Use the equation for the RMY static pressure port:
+	' P_error = 3.44e-06(WS)3 - 0.0012(WS)2 + 0.0031(WS) - 0.013. Use the WS_ms_raw for WS
+	 SplitStr(temp_pressure,Pressure," ",1,0)
+	 Pressure_corr = ROUND(temp_pressure - ((3.44e-06)*(WS_ms_raw)^3 - 0.0012*(WS_ms_raw)^2 + 0.0031*(WS_ms_raw) - 0.013),2)
+		
+	'Now the GPS data, this is going to take some massaging
+	GPS(gpsData,COMU1,LOCAL_UTC_OFFSET*3600,100,nmea)
+
+	'Split the RMC message
+	SplitStr(GPSRMC(), nmea(1),",",12,5)
+	'Now, Time is GPSRMC(2), Status is 3, Lat 4, lon 6
+	'speed 8, direction 9, date 10, mag variation 11
+	GPSTime  = GPSRMC(2)
+	GPSStatus = GPSRMC(3)
+	GPSLat = GPSRMC(4) & " " & GPSRMC(5)
+	GPSLon = GPSRMC(6) & " " & GPSRMC(7)
+	GPSSpd = GPSRMC(8)
+	GPSDir = GPSRMC(9)
+	GPSDate = GPSRMC(10)
+	'Old way of magvar, might be wrong
+	'GPSMagVar = GPSRMC(11) & " " & GPSRMC(12)
+	GPSMagVar = GPSRMC(11)
+	SplitStr(GPSGGA(), nmea(2),",",15,5)
+	GPSAlt = GPSGGA(10)
+	
+'GPS speed is coming in as knots, we need m/s, so make that change
+  	GPSSpd = GPSSpd * 0.514444
+  
+	'Read in the Fluxgate String
+	SerialOpen(ComU9,9600,0,0,10000)
+	'Now read the response from the Fluxgate
+	SerialInRecord(ComU9,FluxStr,0,0,0,"",01)
+	'Now split the string to get just the direction, first split into 3 segments using ",".
+	'Option 5 seems to give back alphanumeric splits
+	SplitStr(FluxData(),FluxStr,",",3,5)
+	'Now get the numerical direction
+	SplitStr(FluxDirection,FluxData(1),"$",1,0)
+	
+    '----------------------------------------------------------------------
+    '----------------------------------------------------------------------
+    'Data processing
+    'Relative Humidity
+    e_s = 6.1365 * EXP((17.502 * Utube_FastTemp) / (240.97 + Utube_FastTemp))
+    e = 6.1365 * EXP((17.502 * TdC)/(240.97 + TdC))
+    Derived_RH = (e / e_s) * 100
+            
+    'Process wind speed and direction
+    'If the GPS isn't working, GPSMagVar will be NAN, in that case use zero to go ahead and pass through the heading.
+    if GPSMagVar=NAN Then GPSMagVar=0
+    compassDir = FluxDirection + GPSMagVar      'Compass reading corrected to front of vehicle and adjusted for magnetic variation      
+    If compassDir >= 360 Then compassDir = compassDir - 360        'Correction for crossing 360 due to offset
+    If compassDir < 0 Then compassDir = compassDir + 360           'Correction for crossing 0 due to offset
+
+'If the vehicle is moving, we need to take out the vehicle speed from the winds
+If GPSSpd > 1
+	'First the vehicle vector, in radians
+Veh_vector = GPSDir - 180
+    	If Veh_vector < 0 Then Veh_vector = Veh_vector + 360
+Veh_vector = Veh_vector * D_R 
+    	
+'Now break it into components
+      	Veh_x = GPSSpd * SIN(Veh_vector)
+     	 Veh_y = GPSSpd * COS(Veh_vector)
+      
+      	'Now the apparent wind, in radians
+'Apparent_vector is the raw wind direction relative to the met coordinate system, taking into account the 
+'GPS heading and the offset, and then flipped to get headwind
+Apparent_vector = WindDir_raw - WD_OFFSET + GPSDir - 180
+If Apparent_vector < 0 Then Apparent_vector = Apparent_vector + 360
+Apparent_vector = Apparent_vector * D_R
+      
+'Now break into components
+Apparent_x = WS_ms_raw * SIN(Apparent_vector)
+Apparent_y = WS_ms_raw * COS(Apparent_vector)
+
+'The difference      
+X = Veh_x - Apparent_x
+Y = Veh_y - Apparent_y
+      
+'Now the fun part, the nested if statements to go quadrant by quadrant
+If X > 0 AND Y > 0 Then 
+windDir_Der = 90 - R_D * ATN(ABS(Y/X))
+ElseIf X > 0 AND Y < 0 Then 
+          		windDir_Der = 90 + R_D * ATN(ABS(Y/X))      
+ElseIf X < 0 AND Y < 0 Then 
+          		windDir_Der = 270 - R_D * ATN(ABS(Y/X))
+ElseIf X < 0 AND Y > 0 Then 
+          		windDir_Der = 270 + R_D * ATN(ABS(Y/X))
+      	ElseIf X = 0 AND Y > 0 Then
+          		windDir_Der = 0
+      	ElseIf X > 0 AND Y = 0 Then
+          		windDir_Der = 90
+      	ElseIf X = 0 AND Y < 0 Then
+          		windDir_Der = 180
+      	ElseIf X < 0 AND Y = 0 Then
+          		windDir_Der = 270
+      	ElseIf X = 0 AND Y = 0 Then
+          		windDir_Der = 999
+      	EndIf
+
+	windSpd_ms = SQR(X^2 + Y^2)
+	
+      Else
+	'Here the vehicle isn't moving, so it's a lot simpler
+      	Apparent_vector = WindDir_raw - WD_OFFSET	‘This is essentially the deviation of the vane
+      	windDir_Der = compassDir + Apparent_vector
+      
+     	 'Problems arise if you cross the 0 degree line....
+      	If windDir_Der > 360 Then windDir_Der = windDir_Der - 360
+If windDir_Der < 0 Then windDir_Der = windDir_Der + 360
+      	If windDir_Der = 360 Then windDir_Der = 0
+
+      	windSpd_ms = WS_ms_raw
+      	X = windSpd_ms * SIN(windDir_Der)
+      	Y = windSpd_ms * COS(windDir_Der)
+   EndIf
+
+	'Create the lat/lon decimal notation
+	GPS_lat_decimal = gpsData(1) + gpsData(2)/60
+	GPS_lon_decimal = gpsData(3) + gpsData(4)/60
+	'Get the day, month, year, and UTC time from the various GPS data records. 
+	'Strings are dumb here so we have to do this manually'
+	DD_temp = Floor(GPSDate/10000)
+	MM_temp = Floor((GPSDate - (DD_temp*10000))/100)
+	YY_temp = ((GPSDate - (DD_temp*10000)) - (MM_temp*100)) + 2000
+
+	hour_temp = Floor(GPSTime/10000)
+	minute_temp = Floor((GPSTime - (hour_temp*10000))/100)
+	second_temp = ((GPSTime - (hour_temp*10000)) - (minute_temp*100))
+	SprintF(GPS_date_time,"%02.0f-%02.0f-%02.0f %02.0f:%02.0f:%02.0f",YY_temp,MM_temp,DD_temp,hour_temp,minute_temp,second_temp)
+
+	'Finally get the proper heading
+	If GPSSpd > 1
+		veh_heading = GPSDir
+	Else
+		veh_heading = compassDir
+	EndIf
+	'Call Data Tables and Store Data
+	CallTable Obs
+    	CallTable Support
+	NextScan
+EndProg
